@@ -193,14 +193,26 @@ Could be re-added if needed for massive static models (>2M splats). Would requir
 - Spherical harmonics WIP/disabled
 - Good foundation, needs polish
 
-### XV3DGS-UEPlugin (alternative)
+### XV3DGS / XScene-UEPlugin (alternative)
 
-- 971+ stars, actively maintained
-- More comprehensive features
-- Could be reference for future work:
-  - Proper SH support
-  - VR optimizations
-  - Editor tooling
+- 971+ stars, actively maintained by XVERSE Technology (Shenzhen)
+- Claims SH support up to degree 3
+- **Binary-only distribution** - Source folder contains only Build.cs, no .cpp/.h
+- Cannot learn from or modify their SH implementation
+- Useful for comparison/validation, not as code reference
+
+### liaoKM/3DGS-UE5-Plugin (RetinaGS)
+
+- Open source with actual shader code
+- Has SH infrastructure but **only L0 implemented**
+- View direction calculated but unused (dead code)
+- Minimal maintenance (10 commits, UE 5.4.4 only)
+- Useful reference for shader structure
+
+### SH Implementation Status (January 2026)
+
+No open-source UE5 3DGS plugin has working higher-order SH evaluation.
+See `SPHERICAL_HARMONICS_IMPLEMENTATION.md` for implementation plan
 
 ---
 
@@ -226,3 +238,10 @@ Could be re-added if needed for massive static models (>2M splats). Would requir
 | `GaussianSplatRTTestActor.h/cpp` | RT debugging actor |
 | `M_CopyTexture.uasset` | Material for RT copying |
 | `create_copy_material.py` | Script to create copy material |
+
+### Documentation
+
+| File | Purpose |
+|------|---------|
+| `EXPLORATION_NOTES.md` | This file - tabled/abandoned approaches |
+| `SPHERICAL_HARMONICS_IMPLEMENTATION.md` | SH implementation plan and HLSL code |
