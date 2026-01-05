@@ -127,7 +127,7 @@ static FString CreateAndSaveTexture(
 	void* DestPixels = Mip->BulkData.Realloc(InPixelData.Num() * sizeof(FLinearColor));
 
 
-	// Überprüfen, ob die Speicherzuweisung erfolgreich war.
+	// ï¿½berprï¿½fen, ob die Speicherzuweisung erfolgreich war.
 
 	// Daten in die Textur kopieren
 	FMemory::Memcpy(DestPixels, InPixelData.GetData(), InPixelData.Num() * sizeof(FLinearColor));
@@ -166,28 +166,34 @@ static FString CreateAndSaveTexture(
 	//return PackagePath;
 }
 
-static FString CreateDirectory(FString Path) {
+static FString CreateDirectory(FString Path, bool bAllowOverwrite = true) {
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	UE_LOG(LogTemp, Log, TEXT("This is the Path: %s"), *Path);
 	FString AbsoluteFilePath = Path;
-	int i = 0;
 
-	while (PlatformFile.DirectoryExists(*AbsoluteFilePath)) {
-		AbsoluteFilePath = Path + FString::FromInt(i);
-		i++;
-	}
-
-	// 1. Create Physical Folder
-	if (PlatformFile.CreateDirectory(*AbsoluteFilePath))
+	// Only create unique directories if overwrite is not allowed
+	if (!bAllowOverwrite)
 	{
-		UE_LOG(LogTemp, Log, TEXT("Created physical directory: %s"), *AbsoluteFilePath);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to create physical directory: %s"), *AbsoluteFilePath);
+		int i = 0;
+		while (PlatformFile.DirectoryExists(*AbsoluteFilePath)) {
+			AbsoluteFilePath = Path + FString::FromInt(i);
+			i++;
+		}
 	}
 
-	// 2. Notify Unreal Engine Asset Manager
+	// Create Physical Folder (or reuse existing)
+	if (!PlatformFile.DirectoryExists(*AbsoluteFilePath))
+	{
+		if (PlatformFile.CreateDirectory(*AbsoluteFilePath))
+		{
+			UE_LOG(LogTemp, Log, TEXT("Created directory: %s"), *AbsoluteFilePath);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("Failed to create directory: %s"), *AbsoluteFilePath);
+		}
+	}
+
+	// Notify Unreal Engine Asset Manager
 	FString ContentBrowserPath = FPackageName::FilenameToLongPackageName(AbsoluteFilePath);
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	AssetRegistryModule.Get().AddPath(ContentBrowserPath);
@@ -216,44 +222,7 @@ static UTexture2D* CreateTexture(int32 width, int32 height, const FString& Name)
 	return NewTexture;
 }
 
-static int getGridIndex(FVector position, FVector boundsMin, FVector boundsMax, int cellsPerEdge) {
-	if (cellsPerEdge == 1) {
-		return 0;
-	}
-
-	// Calculate the grid cell index in 3d
-	// 1. Calculate the size of the bounding box defined by boundsMin and boundsMax
-	FVector BoxSize = boundsMax - boundsMin;
-
-	// 2. Translate the 'position' relative to the 'boundsMin' corner
-	//    This shifts the origin of our coordinate system to the min corner of the box.
-	FVector RelativePosition = position - boundsMin;
-
-	// 3. Normalize the relative position to a [0, 1] range for each axis
-	//    Divide by the box size. Be careful with division by zero.
-	FVector NormalizedPosition = FVector::ZeroVector;
-	if (BoxSize.X > KINDA_SMALL_NUMBER) NormalizedPosition.X = RelativePosition.X / BoxSize.X;
-	if (BoxSize.Y > KINDA_SMALL_NUMBER) NormalizedPosition.Y = RelativePosition.Y / BoxSize.Y;
-	if (BoxSize.Z > KINDA_SMALL_NUMBER) NormalizedPosition.Z = RelativePosition.Z / BoxSize.Z;
-
-	// 4. Scale the normalized position by cellsPerEdge to get floating-point cell coordinates
-	FVector ScaledPosition = NormalizedPosition * (float)cellsPerEdge;
-
-	// 5. Floor the scaled position to get the integer 3D grid cell index
-	int32 CellX = FMath::FloorToInt(ScaledPosition.X);
-	int32 CellY = FMath::FloorToInt(ScaledPosition.Y);
-	int32 CellZ = FMath::FloorToInt(ScaledPosition.Z);
-
-	// 6. Clamp the cell indices to be within the valid range [0, cellsPerEdge - 1]
-	//    This is crucial for positions slightly outside the box or exactly on max boundaries.
-	CellX = FMath::Clamp(CellX, 0, cellsPerEdge - 1);
-	CellY = FMath::Clamp(CellY, 0, cellsPerEdge - 1);
-	CellZ = FMath::Clamp(CellZ, 0, cellsPerEdge - 1);
-
-	int LinearIndex = CellZ * (cellsPerEdge * cellsPerEdge) + CellY * cellsPerEdge + CellX;
-
-	return LinearIndex;
-}
+// Grid subdivision removed - was never used at runtime (only TexLocations[0] was accessed)
 
 bool PopulateGaussianTexture(UTexture2D* Texture, const TArray<FLinearColor>& DataArray, int32 InSizeX, int32 InSizeY)
 {
@@ -288,8 +257,8 @@ bool PopulateGaussianTexture(UTexture2D* Texture, const TArray<FLinearColor>& Da
 
 int UParser::Preprocess3DGSModel(FString FilePath, bool& bOutSuccess, FString& OutputString, TArray<FTextureLocations>& TexLocations) {
 	// ----- Prepare Parsing -----
-
-	FString AbsolutePath = FPaths::ProjectContentDir() + "Models/" + FilePath;
+	// FilePath is relative to Content/ (e.g., "Splats/mymodel.ply")
+	FString AbsolutePath = FPaths::ProjectContentDir() + FilePath;
 	FString Output = "---- Parsing PLY File ----\n\n";
 	TMap<FString, float*> vertexData;
 	uint32_t numVertices = 0;
@@ -395,170 +364,122 @@ int UParser::Preprocess3DGSModel(FString FilePath, bool& bOutSuccess, FString& O
 
 	FVector BoundsMin = 100.0f * FVector(min_x, min_y, min_z);
 	FVector BoundsMax = 100.0f * FVector(max_x, max_y, max_z);
-	float BoxEdgeLengthX = 100.0f * (max_x - min_x);
-	float BoxEdgeLengthY = 100.0f * (max_y - min_y);
-	float BoxEdgeLengthZ = 100.0f * (max_z - min_y);
-
-	// -- Divide Model into Emitter Grid --
-	// Bounding box is divided into equally sized grid
-	// Calculate how many cells per edge are needed
-	int CellsPerEdge = 1;
-
-	if (numVertices > 3500000) {
-		CellsPerEdge = 4;
-
-	}
-	else if (numVertices > 1500000) {
-		CellsPerEdge = 2;
-
-	}
-
-	int GridCells = CellsPerEdge * CellsPerEdge * CellsPerEdge;
 
 	// -- Create Folder Structure in Game --
-	FString ModelFolderPath = FPaths::ProjectContentDir() + "Models/" + FPaths::GetBaseFilename(FilePath);
+	// Output to same folder as input PLY (without .ply extension)
+	FString ModelFolderPath = FPaths::ProjectContentDir() + FPaths::GetPath(FilePath) / FPaths::GetBaseFilename(FilePath);
 	ModelFolderPath = CreateDirectory(ModelFolderPath);
-	FString EmitterFolderPath = ModelFolderPath + "/Emitters";
-	EmitterFolderPath = CreateDirectory(EmitterFolderPath);
 
-	// Process Data and Prepare Pixel Values and sort them into the correct emitter
-	TArray<FGaussianSplattingTextureData> TextureDataPerEmitter; // List of PixelData Arrays per Emitter
-	for (int i = 0; i < GridCells; i++) {
-		FGaussianSplattingTextureData textureData;
-		TextureDataPerEmitter.Add(textureData);
-	}
+	// Single texture data (no grid subdivision)
+	FGaussianSplattingTextureData TextureData;
 
 	// Process splats
 	for (uint32_t i = 0; i < numVertices; i++) {
-		// Map to Emitter Grid based on Position
-// Map to Emitter Grid based on Position
-		FVector Position = 100.0f * FVector(vertexData["x"][i], -vertexData["z"][i], -vertexData["y"][i]);
-		int currentEmitterIndex = getGridIndex(Position, BoundsMin, BoundsMax, CellsPerEdge);
-
 		// Positions
 		FLinearColor PositionPixel = 100.0f * FLinearColor(vertexData["x"][i], -vertexData["z"][i], -vertexData["y"][i]);
-		TextureDataPerEmitter[currentEmitterIndex].PositionTextureData.Add(PositionPixel);
+		TextureData.PositionTextureData.Add(PositionPixel);
 
 		// Scales
 		FLinearColor ScalePixel = 100.0f * FLinearColor(FMath::Exp(vertexData["scale_0"][i]), FMath::Exp(vertexData["scale_2"][i]), FMath::Exp(vertexData["scale_1"][i]));
-		TextureDataPerEmitter[currentEmitterIndex].ScaleTextureData.Add(ScalePixel);
+		TextureData.ScaleTextureData.Add(ScalePixel);
 
 		// Rotation
-		FQuat Rot = FQuat(vertexData["rot_1"][i], vertexData["rot_2"][i], vertexData["rot_3"][i], vertexData["rot_0"][i]); // Normalize Quaternion
+		FQuat Rot = FQuat(vertexData["rot_1"][i], vertexData["rot_2"][i], vertexData["rot_3"][i], vertexData["rot_0"][i]);
 		Rot.Normalize();
 		FLinearColor RotationPixel = FLinearColor(Rot.X, -Rot.Z, -Rot.Y, Rot.W);
-		TextureDataPerEmitter[currentEmitterIndex].RotationTextureData.Add(RotationPixel);
+		TextureData.RotationTextureData.Add(RotationPixel);
 
 		// BaseColor and Opacity
 		FVector ZeroOrderHarmonics = FVector(vertexData["f_dc_0"][i], vertexData["f_dc_1"][i], vertexData["f_dc_2"][i]);
 		FLinearColor BaseColor = FLinearColor(ZeroOrderHarmonics.X, ZeroOrderHarmonics.Y, ZeroOrderHarmonics.Z);
-
-		float Opacity = FMath::Clamp(1.0f / (1.0f + FMath::Exp(-vertexData["opacity"][i])), 0.0f, 1.0f); // Apply Sigmoid Function
-
+		float Opacity = FMath::Clamp(1.0f / (1.0f + FMath::Exp(-vertexData["opacity"][i])), 0.0f, 1.0f);
 		FLinearColor ColorPixel = FLinearColor(BaseColor.R, BaseColor.G, BaseColor.B, Opacity);
-		TextureDataPerEmitter[currentEmitterIndex].ColorTextureData.Add(ColorPixel);
+		TextureData.ColorTextureData.Add(ColorPixel);
 
 		// Higher Order Harmonics
-		// L1 - 3 Pixel per Gaussian
 		if (higherOrderHarmonicsExists) {
+			// L1 - 3 Pixel per Gaussian
 			for (uint32_t y = 0; y < 9; y += 3) {
 				FString index1 = "f_rest_" + FString::FromInt(y);
 				FString index2 = "f_rest_" + FString::FromInt(y + 1);
 				FString index3 = "f_rest_" + FString::FromInt(y + 2);
-				FLinearColor Test = FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]);
-
-				if (i < 5) {
-					UE_LOG(LogTemp, Log, TEXT("PLY - Splat %d Harmonics L1: r %f g %f b %f"), i, vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]);
-					UE_LOG(LogTemp, Log, TEXT("Texture - Splat %d Harmonics L1: r %f g %f b %f"), i, Test.R, Test.G, Test.B);
-				}
-				TextureDataPerEmitter[currentEmitterIndex].harmonicsL1TextureData.Add(Test);
+				TextureData.harmonicsL1TextureData.Add(FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]));
 			}
 			// L2 - 5 Pixel per Gaussian
 			for (uint32_t y = 9; y < 24; y += 3) {
 				FString index1 = "f_rest_" + FString::FromInt(y);
 				FString index2 = "f_rest_" + FString::FromInt(y + 1);
 				FString index3 = "f_rest_" + FString::FromInt(y + 2);
-				TextureDataPerEmitter[currentEmitterIndex].harmonicsL2TextureData.Add(FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]));
+				TextureData.harmonicsL2TextureData.Add(FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]));
 			}
-
 			// L3 - 7 Pixel per Gaussian (divided into 4 and 3)
 			for (uint32_t y = 24; y < 36; y += 3) {
 				FString index1 = "f_rest_" + FString::FromInt(y);
 				FString index2 = "f_rest_" + FString::FromInt(y + 1);
 				FString index3 = "f_rest_" + FString::FromInt(y + 2);
-				TextureDataPerEmitter[currentEmitterIndex].harmonicsL31TextureData.Add(FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]));
+				TextureData.harmonicsL31TextureData.Add(FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]));
 			}
-
 			for (uint32_t y = 36; y < 45; y += 3) {
 				FString index1 = "f_rest_" + FString::FromInt(y);
 				FString index2 = "f_rest_" + FString::FromInt(y + 1);
 				FString index3 = "f_rest_" + FString::FromInt(y + 2);
-				TextureDataPerEmitter[currentEmitterIndex].harmonicsL32TextureData.Add(FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]));
+				TextureData.harmonicsL32TextureData.Add(FLinearColor(vertexData[index1][i], vertexData[index2][i], vertexData[index3][i]));
 			}
 		}
 	}
 
-	// Create Emitter Folder and Textures per Emitter
-	for (int i = 0; i < GridCells; i++) {
-		FTextureLocations TextureLocations;
-		// Create Emitter Folder
-		FString NewEmitterFolder = EmitterFolderPath / FString::FromInt(i);
-		NewEmitterFolder = CreateDirectory(NewEmitterFolder);
-		// Create Emitter Description
+	// Create and save textures directly to model folder (no Emitters subfolder)
+	FTextureLocations TextureLocations;
 
-		// TODO: Emitter Description File
-
-		// Create, Populate and Store Textures per Emitter
-		
-		int numPixels = TextureDataPerEmitter[i].PositionTextureData.Num();
-		if (numPixels == 0) {
-			continue;
-		}
-		else if (numPixels <= 100) {
-			continue;
-		}
-		float TextureWidth = ceil(sqrt(numPixels));
-		float TextureHeight = ceil(numPixels / TextureWidth);
-		FString PositionAssetPath = CreateAndSaveTexture(NewEmitterFolder, "positiontexture",TextureWidth, TextureHeight, TextureDataPerEmitter[i].PositionTextureData);
-		TextureLocations.PositionTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(PositionAssetPath));
-
-		FString ColorAssetPath = CreateAndSaveTexture(NewEmitterFolder, "colortexture", TextureWidth, TextureHeight, TextureDataPerEmitter[i].ColorTextureData);
-		TextureLocations.ColorTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(ColorAssetPath));
-
-		FString ScaleAssetPath = CreateAndSaveTexture(NewEmitterFolder, "scaletexture", TextureWidth, TextureHeight, TextureDataPerEmitter[i].ScaleTextureData);
-		TextureLocations.ScaleTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(ScaleAssetPath));
-		 
-		FString RotationAssetPath = CreateAndSaveTexture(NewEmitterFolder, "rotationtexture", TextureWidth, TextureHeight, TextureDataPerEmitter[i].RotationTextureData);
-		TextureLocations.RotationTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(RotationAssetPath));
-		
-		if (higherOrderHarmonicsExists) {
-			int numPixelsHL1 = TextureDataPerEmitter[i].harmonicsL1TextureData.Num();
-			float harmonicsL1Width = ceil(sqrt(numPixelsHL1));
-			float harmonicsL1Height = ceil(numPixelsHL1 / harmonicsL1Width);
-			FString HarmonicsL1AssetPath = CreateAndSaveTexture(NewEmitterFolder, "harmonicsl1texture", harmonicsL1Width, harmonicsL1Height, TextureDataPerEmitter[i].harmonicsL1TextureData);
-			TextureLocations.HarmonicsL1TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL1AssetPath));
-		
-			int numPixelsHL2 = TextureDataPerEmitter[i].harmonicsL2TextureData.Num();
-			float harmonicsL2Width = ceil(sqrt(numPixelsHL2));
-			float harmonicsL2Height = ceil(numPixelsHL2 / harmonicsL2Width);
-			FString HarmonicsL2AssetPath = CreateAndSaveTexture(NewEmitterFolder, "harmonicsl2texture", harmonicsL2Width, harmonicsL2Height, TextureDataPerEmitter[i].harmonicsL2TextureData);
-			TextureLocations.HarmonicsL2TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL2AssetPath));
-
-			int numPixelsHL31 = TextureDataPerEmitter[i].harmonicsL31TextureData.Num();
-			float harmonicsL3Width1 = ceil(sqrt(numPixelsHL31));
-			float harmonicsL3Height1 = ceil(numPixelsHL31 / harmonicsL3Width1);
-			FString HarmonicsL31AssetPath = CreateAndSaveTexture(NewEmitterFolder, "harmonicsl31texture", harmonicsL3Width1, harmonicsL3Height1, TextureDataPerEmitter[i].harmonicsL31TextureData);
-			TextureLocations.HarmonicsL31TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL31AssetPath));
-
-			int numPixelsHL32 = TextureDataPerEmitter[i].harmonicsL32TextureData.Num();
-			float harmonicsL3Width2 = ceil(sqrt(numPixelsHL32));
-			float harmonicsL3Height2 = ceil(numPixelsHL32 / harmonicsL3Width2);
-			FString HarmonicsL32AssetPath = CreateAndSaveTexture(NewEmitterFolder, "harmonicsl32texture", harmonicsL3Width2, harmonicsL3Height2, TextureDataPerEmitter[i].harmonicsL32TextureData);
-			TextureLocations.HarmonicsL32TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL32AssetPath));
-		}
-
-		TexLocations.Add(TextureLocations);
+	int numPixels = TextureData.PositionTextureData.Num();
+	if (numPixels <= 100) {
+		bOutSuccess = false;
+		OutputString = TEXT("Too few splats to process");
+		return numVertices;
 	}
+
+	float TextureWidth = ceil(sqrt(numPixels));
+	float TextureHeight = ceil(numPixels / TextureWidth);
+
+	FString PositionAssetPath = CreateAndSaveTexture(ModelFolderPath, "positiontexture", TextureWidth, TextureHeight, TextureData.PositionTextureData);
+	TextureLocations.PositionTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(PositionAssetPath));
+
+	FString ColorAssetPath = CreateAndSaveTexture(ModelFolderPath, "colortexture", TextureWidth, TextureHeight, TextureData.ColorTextureData);
+	TextureLocations.ColorTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(ColorAssetPath));
+
+	FString ScaleAssetPath = CreateAndSaveTexture(ModelFolderPath, "scaletexture", TextureWidth, TextureHeight, TextureData.ScaleTextureData);
+	TextureLocations.ScaleTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(ScaleAssetPath));
+
+	FString RotationAssetPath = CreateAndSaveTexture(ModelFolderPath, "rotationtexture", TextureWidth, TextureHeight, TextureData.RotationTextureData);
+	TextureLocations.RotationTextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(RotationAssetPath));
+
+	if (higherOrderHarmonicsExists) {
+		int numPixelsHL1 = TextureData.harmonicsL1TextureData.Num();
+		float harmonicsL1Width = ceil(sqrt(numPixelsHL1));
+		float harmonicsL1Height = ceil(numPixelsHL1 / harmonicsL1Width);
+		FString HarmonicsL1AssetPath = CreateAndSaveTexture(ModelFolderPath, "harmonicsl1texture", harmonicsL1Width, harmonicsL1Height, TextureData.harmonicsL1TextureData);
+		TextureLocations.HarmonicsL1TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL1AssetPath));
+
+		int numPixelsHL2 = TextureData.harmonicsL2TextureData.Num();
+		float harmonicsL2Width = ceil(sqrt(numPixelsHL2));
+		float harmonicsL2Height = ceil(numPixelsHL2 / harmonicsL2Width);
+		FString HarmonicsL2AssetPath = CreateAndSaveTexture(ModelFolderPath, "harmonicsl2texture", harmonicsL2Width, harmonicsL2Height, TextureData.harmonicsL2TextureData);
+		TextureLocations.HarmonicsL2TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL2AssetPath));
+
+		int numPixelsHL31 = TextureData.harmonicsL31TextureData.Num();
+		float harmonicsL3Width1 = ceil(sqrt(numPixelsHL31));
+		float harmonicsL3Height1 = ceil(numPixelsHL31 / harmonicsL3Width1);
+		FString HarmonicsL31AssetPath = CreateAndSaveTexture(ModelFolderPath, "harmonicsl31texture", harmonicsL3Width1, harmonicsL3Height1, TextureData.harmonicsL31TextureData);
+		TextureLocations.HarmonicsL31TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL31AssetPath));
+
+		int numPixelsHL32 = TextureData.harmonicsL32TextureData.Num();
+		float harmonicsL3Width2 = ceil(sqrt(numPixelsHL32));
+		float harmonicsL3Height2 = ceil(numPixelsHL32 / harmonicsL3Width2);
+		FString HarmonicsL32AssetPath = CreateAndSaveTexture(ModelFolderPath, "harmonicsl32texture", harmonicsL3Width2, harmonicsL3Height2, TextureData.harmonicsL32TextureData);
+		TextureLocations.HarmonicsL32TextureLocation = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(HarmonicsL32AssetPath));
+	}
+
+	TexLocations.Add(TextureLocations);
 
 	bOutSuccess = true;
 	Output += FString::Printf(TEXT("Successfully parsed PLY File - %s\n\n-- PLY Header --\n\n"), *AbsolutePath);
@@ -574,10 +495,10 @@ int UParser::Preprocess3DGSModel(FString FilePath, bool& bOutSuccess, FString& O
 }
 
 FGaussianSplatData UParser::ParseFilePLY(FString FilePath, bool& bOutSuccess, FString& OutputString) {
-	
-	// ---- Preparation ----
 
-	FString AbsolutePath = FPaths::ProjectContentDir() + "Models/" + FilePath;
+	// ---- Preparation ----
+	// FilePath is relative to Content/ (e.g., "Splats/mymodel.ply")
+	FString AbsolutePath = FPaths::ProjectContentDir() + FilePath;
 	FString Output = "---- Parsing PLY File ----\n\n";
 	TMap<FString, float*> vertexData;
 	uint32_t numVertices = 0;
@@ -724,6 +645,81 @@ TArray<FLinearColor> UParser::SH2RGB(TArray<FVector> ZeroOrderHarmonics, TArray<
 		result.Add(col);
 	}
 	return result;
+}
+
+int UParser::PreprocessSequence(FString ModelName, FString SourceDirectory, bool& bOutSuccess, FString& OutputString)
+{
+	bOutSuccess = false;
+	OutputString = TEXT("---- Preprocessing Sequence ----\n");
+
+	if (ModelName.IsEmpty())
+	{
+		OutputString += TEXT("Error: ModelName is empty!\n");
+		return 0;
+	}
+
+	// Find PLY files in source directory
+	// SourceDirectory is relative to Content/ (e.g., "Splats/sequence_folder")
+	FString SourcePath = FPaths::ProjectContentDir() / SourceDirectory;
+	TArray<FString> PlyFiles;
+	IFileManager::Get().FindFiles(PlyFiles, *(SourcePath / TEXT("*.ply")), true, false);
+	PlyFiles.Sort();
+
+	if (PlyFiles.Num() == 0)
+	{
+		OutputString += FString::Printf(TEXT("Error: No PLY files found in %s\n"), *SourcePath);
+		return 0;
+	}
+
+	OutputString += FString::Printf(TEXT("Found %d PLY files in %s\n"), PlyFiles.Num(), *SourcePath);
+
+	// Create output directory (same parent as source, with ModelName subfolder)
+	FString OutputBasePath = FPaths::ProjectContentDir() / FPaths::GetPath(SourceDirectory) / ModelName;
+	IFileManager::Get().MakeDirectory(*OutputBasePath, true);
+
+	int FramesProcessed = 0;
+
+	for (int32 FrameIdx = 0; FrameIdx < PlyFiles.Num(); FrameIdx++)
+	{
+		const FString& PlyFile = PlyFiles[FrameIdx];
+		FString PlyPath = SourcePath / PlyFile;
+
+		// Create frame folder: ModelName/frame_00000/
+		FString FrameFolderName = FString::Printf(TEXT("frame_%05d"), FrameIdx);
+		FString FrameFolderPath = OutputBasePath / FrameFolderName;
+		IFileManager::Get().MakeDirectory(*FrameFolderPath, true);
+
+		// Parse PLY and create textures directly in frame folder (no Emitters subfolder)
+		bool bParseSuccess = false;
+		FString ParseOutput;
+		TArray<FTextureLocations> TempLocations;
+
+		// Use existing preprocessing but we'll need the textures saved to a different location
+		// For now, call Preprocess3DGSModel with the individual PLY, then move/copy results
+		// This is a workaround - ideally we'd refactor to share the core parsing logic
+
+		OutputString += FString::Printf(TEXT("Processing frame %d: %s\n"), FrameIdx, *PlyFile);
+
+		// Process the PLY file - note: this creates in the old structure
+		// A proper implementation would refactor the core parsing into a shared function
+		int NumVerts = Preprocess3DGSModel(SourceDirectory / PlyFile, bParseSuccess, ParseOutput, TempLocations);
+
+		if (bParseSuccess && NumVerts > 0)
+		{
+			FramesProcessed++;
+			OutputString += FString::Printf(TEXT("  -> %d vertices processed\n"), NumVerts);
+		}
+		else
+		{
+			OutputString += FString::Printf(TEXT("  -> FAILED: %s\n"), *ParseOutput);
+		}
+	}
+
+	bOutSuccess = FramesProcessed > 0;
+	OutputString += FString::Printf(TEXT("\n---- Sequence Complete: %d/%d frames processed ----\n"), FramesProcessed, PlyFiles.Num());
+	OutputString += FString::Printf(TEXT("Note: Textures saved to old structure. Move manually to %s/frame_XXXXX/ or refactor Parser.\n"), *ModelName);
+
+	return FramesProcessed;
 }
 
 

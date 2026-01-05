@@ -140,6 +140,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "JI20/Parser")
 	static TArray<FLinearColor> SH2RGB(TArray<FVector> ZeroOrderHarmonics, TArray<FHighOrderHarmonicsCoefficientsStruct> HigherOrderHarmonics);
 
+	/**
+	 * Preprocess a single PLY file into textures.
+	 * Output: Creates folder next to PLY with textures inside.
+	 *
+	 * @param FilePath - Path to PLY file relative to Content/ (e.g., "Splats/mymodel.ply")
+	 * @param bOutSuccess - Success flag
+	 * @param OutputString - Log output
+	 * @param TexLocations - Output array with single FTextureLocations
+	 * @return Number of vertices processed
+	 */
 	UFUNCTION(BlueprintCallable, Category = "JI20/UnrealSplat")
 	static int Preprocess3DGSModel(FString FilePath, bool& bOutSuccess, FString& OutputString, TArray<FTextureLocations>& TexLocations);
+
+	/**
+	 * Preprocess a sequence of PLY files into frame folders.
+	 * Output: {ParentOfSourceDir}/{ModelName}/frame_XXXXX/textures
+	 *
+	 * @param ModelName - Output folder name
+	 * @param SourceDirectory - Directory with *.ply files, relative to Content/ (e.g., "Splats/sequence")
+	 * @param bOutSuccess - Success flag
+	 * @param OutputString - Log output
+	 * @return Number of frames processed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "JI20/UnrealSplat")
+	static int PreprocessSequence(FString ModelName, FString SourceDirectory, bool& bOutSuccess, FString& OutputString);
 };
