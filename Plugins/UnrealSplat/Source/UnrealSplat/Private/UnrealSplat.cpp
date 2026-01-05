@@ -1,62 +1,127 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UnrealSplat.h"
+#include "SUnrealSplatWindow.h"
 #include "ToolMenus.h"
+#include "WorkspaceMenuStructure.h"
+#include "WorkspaceMenuStructureModule.h"
+#include "Widgets/Docking/SDockTab.h"
+#include "Framework/Docking/TabManager.h"
 
 IMPLEMENT_MODULE(FUnrealSplatModule, UnrealSplat)
 
 #define LOCTEXT_NAMESPACE "FUnrealSplatModule"
-void FUnrealSplatModule::RegisterMenuExtensions()
+
+// Define the tab name
+const FName FUnrealSplatModule::PreprocessorTabName(TEXT("UnrealSplatPreprocessor"));
+
+// ============================================================================
+// Toolbar Button Widget
+// ============================================================================
+
+void SUnrealSplatToolbarButton::Construct(const FArguments& InArgs)
 {
-    UE_LOG(LogTemp, Warning, TEXT("My UI Widget should spawn any second"));
-
-    // Use the current object as the owner of the menus
-    // This allows us to remove all our custom menus when the
-    // module is unloaded (see ShutdownModule above)
-    FToolMenuOwnerScoped OwnerScoped(this);
-    UToolMenu* ToolbarMenu = UToolMenus::Get()->ExtendMenu(
-        "LevelEditor.LevelEditorToolBar.PlayToolBar");
-
-    // Extend the "File" section of the main toolbar
-    if (ToolbarMenu)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("ToolbarMenu is valid. Proceeding to add section."));
-
-        // Use the exact section name from the ToolMenus.Edit command.
-        FToolMenuSection& ToolbarSection = ToolbarMenu->AddSection("MyCustomSection");
-
-        ToolbarSection.AddEntry(FToolMenuEntry::InitWidget(
-            TEXT("MyCustomButtonName"),
-            SNew(SMyPluginButtonWidget),
-            INVTEXT("My custom button")
-        ));
-    }
-    else
-    {
-        // This log will tell us the menu path is invalid.
-        UE_LOG(LogTemp, Error, TEXT("Failed to extend menu! The menu path 'LevelEditor.LevelEditorToolBar.ModesToolBar' may be incorrect or unavailable."));
-    }
-
-
-    UE_LOG(LogTemp, Warning, TEXT("My UI Widget should have spawned now"));
-
+	ChildSlot
+	[
+		SNew(SButton)
+		.OnClicked(this, &SUnrealSplatToolbarButton::OnButtonClicked)
+		.ContentPadding(FMargin(5.0f))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(FMargin(0.0f, 0.0f, 5.0f, 0.0f))
+			[
+				SNew(SImage)
+				.Image(FAppStyle::GetBrush("LevelEditor.MeshPaintMode"))
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("ToolbarButtonText", "UnrealSplat"))
+				.Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+			]
+		]
+	];
 }
+
+FReply SUnrealSplatToolbarButton::OnButtonClicked()
+{
+	// Invoke the tab - this will spawn it if not open, or focus it if already open
+	FGlobalTabmanager::Get()->TryInvokeTab(FUnrealSplatModule::PreprocessorTabName);
+	return FReply::Handled();
+}
+
+// ============================================================================
+// Module Implementation
+// ============================================================================
 
 void FUnrealSplatModule::StartupModule()
 {
-    UE_LOG(LogTemp, Warning, TEXT("MyEditorModule has started up!"));
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
-	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(
-		this, &FUnrealSplatModule::RegisterMenuExtensions));
+	UE_LOG(LogTemp, Log, TEXT("UnrealSplat: Module starting up"));
+
+	// Register the tab spawner
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+		PreprocessorTabName,
+		FOnSpawnTab::CreateRaw(this, &FUnrealSplatModule::SpawnPreprocessorTab))
+		.SetDisplayName(LOCTEXT("PreprocessorTabTitle", "UnrealSplat Preprocessor"))
+		.SetTooltipText(LOCTEXT("PreprocessorTabTooltip", "Convert PLY files to 3DGS textures"))
+		.SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory())
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.MeshPaintMode"));
+
+	// Register toolbar button
+	UToolMenus::RegisterStartupCallback(
+		FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FUnrealSplatModule::RegisterMenuExtensions));
 }
 
 void FUnrealSplatModule::ShutdownModule()
 {
-	// Unregister the startup function
-	UToolMenus::UnRegisterStartupCallback(this);
+	// Unregister the tab spawner
+	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(PreprocessorTabName);
 
-	// Unregister all our menu extensions
+	// Unregister menu extensions
+	UToolMenus::UnRegisterStartupCallback(this);
 	UToolMenus::UnregisterOwner(this);
+
+	UE_LOG(LogTemp, Log, TEXT("UnrealSplat: Module shut down"));
+}
+
+void FUnrealSplatModule::RegisterMenuExtensions()
+{
+	FToolMenuOwnerScoped OwnerScoped(this);
+
+	// Add to the play toolbar
+	UToolMenu* ToolbarMenu = UToolMenus::Get()->ExtendMenu(
+		"LevelEditor.LevelEditorToolBar.PlayToolBar");
+
+	if (ToolbarMenu)
+	{
+		FToolMenuSection& ToolbarSection = ToolbarMenu->AddSection("UnrealSplatSection");
+		ToolbarSection.AddEntry(FToolMenuEntry::InitWidget(
+			TEXT("UnrealSplatButton"),
+			SNew(SUnrealSplatToolbarButton),
+			LOCTEXT("ToolbarButtonTooltip", "Open UnrealSplat Preprocessor")
+		));
+
+		UE_LOG(LogTemp, Log, TEXT("UnrealSplat: Toolbar button registered"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UnrealSplat: Failed to find toolbar menu"));
+	}
+}
+
+TSharedRef<SDockTab> FUnrealSplatModule::SpawnPreprocessorTab(const FSpawnTabArgs& Args)
+{
+	return SNew(SDockTab)
+		.TabRole(ETabRole::NomadTab)
+		.Label(LOCTEXT("TabLabel", "UnrealSplat"))
+		[
+			SNew(SUnrealSplatWindow)
+		];
 }
 
 #undef LOCTEXT_NAMESPACE

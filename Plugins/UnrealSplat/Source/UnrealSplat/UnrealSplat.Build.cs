@@ -42,7 +42,7 @@ public class UnrealSplat : ModuleRules
 				"Slate",
 				"SlateCore",
                 "InputCore",
-                "EnhancedInput", 
+                "EnhancedInput",
 				"Niagara",
                 "UnrealEd",
                 "ToolMenus",
@@ -51,9 +51,10 @@ public class UnrealSplat : ModuleRules
 				"UMGEditor",
                 "EditorScriptingUtilities",
 				"ContentBrowser",
-                "AssetRegistry", // Also typically needed if you're interacting with Content Browser
+                "AssetRegistry",
                 "AssetTools",
-				// ... add private dependencies that you statically link with here ...	
+				"DesktopPlatform",
+				"WorkspaceMenuStructure",
 			}
 			);
 		

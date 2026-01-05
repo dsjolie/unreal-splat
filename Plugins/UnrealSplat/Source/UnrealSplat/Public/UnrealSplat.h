@@ -6,88 +6,40 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Images/SImage.h"
-#include "Editor.h" // Provides access to the global GEditor object, essential for editor subsystems [6]
-#include "EditorAssetLibrary.h" // Declares UEditorAssetLibrary, used for loading assets by path [4, 6]
-#include "EditorUtilitySubsystem.h" // Declares UEditorUtilitySubsystem, the primary interface for spawning EUWs [4, 6, 9]
-#include "EditorUtilityWidgetBlueprint.h" // Declares UEditorUtilityWidgetBlueprint, the class representing your EUW asset [4, 6]
+#include "Widgets/Docking/SDockTab.h"
 
-class SMyPluginButtonWidget : public SCompoundWidget
+// Forward declaration
+class SUnrealSplatWindow;
+
+/**
+ * Toolbar button widget - opens the preprocessing window
+ */
+class SUnrealSplatToolbarButton : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS(SMyPluginButtonWidget) {}
+	SLATE_BEGIN_ARGS(SUnrealSplatToolbarButton) {}
 	SLATE_END_ARGS()
 
-    void Construct(const FArguments& InArgs)
-    {
-        ChildSlot
-            [
-                SNew(SButton) // Wrap your content in a button
-                    .OnClicked_Lambda([]() -> FReply // Use a lambda to handle the click
-                        {
-                            // The log message confirms the button click is working.
-                            UE_LOG(LogTemp, Log, TEXT("Button clicked. Attempting to open widget."));
+	void Construct(const FArguments& InArgs);
 
-                            // Use StaticLoadObject to reliably load the asset by path.
-                            const FString WidgetPath = TEXT("/UnrealSplat/Widgets/UnrealSplat.UnrealSplat");
-                            UEditorUtilityWidgetBlueprint* MyWidgetBlueprint = Cast<UEditorUtilityWidgetBlueprint>(
-                                StaticLoadObject(UEditorUtilityWidgetBlueprint::StaticClass(), nullptr, *WidgetPath)
-                            );
-
-                            if (!MyWidgetBlueprint)
-                            {
-                                UE_LOG(LogTemp, Error, TEXT("Failed to load widget blueprint from path: %s"), *WidgetPath);
-                                return FReply::Handled();
-                            }
-
-                            // Get the Editor Utility Subsystem.
-                            UEditorUtilitySubsystem* EditorUtilitySubsystem = GEditor->GetEditorSubsystem<UEditorUtilitySubsystem>();
-                            if (!EditorUtilitySubsystem)
-                            {
-                                UE_LOG(LogTemp, Error, TEXT("Failed to get Editor Utility Subsystem."));
-                                return FReply::Handled();
-                            }
-
-                            // Spawn the widget.
-                            EditorUtilitySubsystem->SpawnAndRegisterTab(MyWidgetBlueprint);
-                            UE_LOG(LogTemp, Log, TEXT("Widget spawned successfully!"));
-
-                            return FReply::Handled();
-                        })
-                    .ContentPadding(FMargin(5.0f)) // Add some padding inside the button
-                    [
-                        SNew(SHorizontalBox)
-                            + SHorizontalBox::Slot()
-                            .AutoWidth()
-                            .VAlign(VAlign_Center)
-                            .Padding(FMargin(0.0f, 0.0f, 5.0f, 0.0f))
-                            [
-                                SNew(SImage)
-                                    .Image(FAppStyle::Get().GetBrush("LevelEditor.MeshPaintMode"))
-                            ]
-                            + SHorizontalBox::Slot()
-                            .AutoWidth()
-                            .VAlign(VAlign_Center)
-                            [
-                                SNew(STextBlock)
-                                    .Text(FText::FromString(TEXT("UnrealSplat")))
-                                    .Font(FCoreStyle::Get().GetFontStyle("SmallText"))
-                            ]
-                    ]
-            ];
-    }
+private:
+	FReply OnButtonClicked();
 };
 
+/**
+ * UnrealSplat module - registers toolbar button and preprocessing window
+ */
 class FUnrealSplatModule : public IModuleInterface
 {
-private:
-	
-	void RegisterMenuExtensions();
-
 public:
+	// Tab identifier
+	static const FName PreprocessorTabName;
 
 	/** IModuleInterface implementation */
-	void StartupModule() override;
-	void ShutdownModule() override;
+	virtual void StartupModule() override;
+	virtual void ShutdownModule() override;
 
-
+private:
+	void RegisterMenuExtensions();
+	TSharedRef<SDockTab> SpawnPreprocessorTab(const FSpawnTabArgs& Args);
 };
