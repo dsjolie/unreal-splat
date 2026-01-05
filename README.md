@@ -43,14 +43,15 @@ This plugin is currently in active development. Please be aware of the following
 
 ## 🚀 How to Use
 
-1.  **Place Your Model**: Copy your `.ply` model file somewhere inside your project's `Content/Models` folder (e.g., `Content/Models/my_model.ply`).
-2.  **Open the UnrealSplat UI**: A new button named **"UnrealSplat"** will appear on the main toolbar in the editor. Click it to open the loading UI.
-3.  **Enter the File Path**: The UI will prompt you for a string. Enter the path to your model **relative to the project's `Content/Models` folder**.
-    * For example, if your model is at `[YourProject]/Content/Models/my_model.ply`, you would enter:
+1.  **Place Your Model**: Copy your `.ply` model file somewhere inside your project's `Content/Splats` folder (e.g., `Content/Splats/my_model.ply`).
+2.  **Open the UnrealSplat UI**: Go to **Window > UnrealSplat Preprocessor** to open the preprocessing window.
+3.  **Enter the File Path**: Enter the path to your model **relative to the Base Path** (default: `Splats`).
+    * For example, if your model is at `[YourProject]/Content/Splats/my_model.ply`, you would enter:
         ```
         my_model.ply
         ```
-4.  **Load Model**: Press the Render button in the UI. The plugin will create the necessary assets and spawn an actor in your scene to render the model.
+    * For 4DGS sequences, check "Sequence Mode" and select a folder containing numbered `.ply` files.
+4.  **Preprocess**: Click the Preprocess button. The plugin will create texture assets in a subfolder next to your model.
 
 
 
@@ -74,6 +75,20 @@ This Project was developed as part of my working student job at the Chair of Com
 
 Jonas Itt: [https://github.com/JI20](https://github.com/JI20)
 Chair of Computer Graphics and Visualization, Technical University of Munich: [https://www.cs.cit.tum.de/cg/cover-page/](https://www.cs.cit.tum.de/cg/cover-page/)
+
+---
+
+## Fork Notes
+
+This is an active fork with the following changes from upstream:
+- Added `GaussianSplatLiveActor` for 4DGS sequence playback
+- Added native Slate preprocessing UI (Window > UnrealSplat Preprocessor)
+- Simplified folder structure (`Content/Splats/` instead of `Content/Models/.../Emitters/`)
+- Removed incomplete grid subdivision feature
+
+Fork maintained by: [dsjolie](https://github.com/dsjolie)
+
+---
 
 ## 🙏 Acknowledgments
 
