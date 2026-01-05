@@ -1,0 +1,223 @@
+// GaussianDeformation.usf
+// Compute shader for 4D Gaussian Splatting deformation network
+// Evaluates HexPlane + MLP to deform Gaussians per-frame
+
+#include "/Engine/Private/Common.ush"
+
+// ============================================================================
+// Buffers and Textures
+// ============================================================================
+
+// Canonical Gaussian data (input)
+StructuredBuffer<float3> CanonicalPositions;
+StructuredBuffer<float3> CanonicalScales;      // Log space
+StructuredBuffer<float4> CanonicalRotations;   // Quaternion
+StructuredBuffer<float>  CanonicalOpacities;   // Logit space
+
+// Deformed Gaussian data (output)
+RWStructuredBuffer<float3> DeformedPositions;
+RWStructuredBuffer<float3> DeformedScales;
+RWStructuredBuffer<float4> DeformedRotations;
+RWStructuredBuffer<float>  DeformedOpacities;
+
+// HexPlane feature grids (6 planes)
+// Each plane is Resolution x Resolution x FeatureDim
+Texture2D<float4> PlaneXY;  // Spatial planes
+Texture2D<float4> PlaneXZ;
+Texture2D<float4> PlaneYZ;
+Texture2D<float4> PlaneXT;  // Temporal planes
+Texture2D<float4> PlaneYT;
+Texture2D<float4> PlaneZT;
+
+SamplerState PlaneSampler;
+
+// MLP weights stored in textures (for easy access)
+// Feature MLP: 8 layers of 256 width
+Texture2D<float4> FeatureMLPWeights;
+StructuredBuffer<float> FeatureMLPBiases;
+
+// Deformation head weights
+Texture2D<float4> PosDeformWeights;
+Texture2D<float4> ScaleDeformWeights;
+Texture2D<float4> RotDeformWeights;
+Texture2D<float4> OpacityDeformWeights;
+
+// Uniforms
+float CurrentTime;          // 0-1 normalized time
+float3 AABBMin;             // Scene bounds
+float3 AABBMax;
+int NumGaussians;
+int FeatureDim;             // Usually 64
+int MLPWidth;               // Usually 256
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// Normalize position to [0,1] within AABB
+float3 NormalizePosition(float3 pos)
+{
+    return (pos - AABBMin) / (AABBMax - AABBMin);
+}
+
+// Sample feature from a 2D plane
+float4 SamplePlane(Texture2D<float4> plane, float2 uv)
+{
+    // Clamp to valid range
+    uv = saturate(uv);
+    return plane.SampleLevel(PlaneSampler, uv, 0);
+}
+
+// Query HexPlane features at (x,y,z,t)
+// Returns concatenated features from all 6 planes
+void QueryHexPlane(float3 pos, float t, out float Features[64])
+{
+    // Normalize coordinates
+    float3 npos = NormalizePosition(pos);
+    float nt = saturate(t);
+
+    // Sample each plane
+    // XY plane: spatial only
+    float4 fXY = SamplePlane(PlaneXY, float2(npos.x, npos.y));
+    float4 fXZ = SamplePlane(PlaneXZ, float2(npos.x, npos.z));
+    float4 fYZ = SamplePlane(PlaneYZ, float2(npos.y, npos.z));
+
+    // Temporal planes
+    float4 fXT = SamplePlane(PlaneXT, float2(npos.x, nt));
+    float4 fYT = SamplePlane(PlaneYT, float2(npos.y, nt));
+    float4 fZT = SamplePlane(PlaneZT, float2(npos.z, nt));
+
+    // Combine features (simplified - actual implementation may differ)
+    // HexPlane typically multiplies or concatenates these
+    // Here we concatenate first 10-11 features from each plane
+
+    // Pack into output array
+    // This is simplified - real implementation depends on exact HexPlane config
+    int idx = 0;
+    Features[idx++] = fXY.x; Features[idx++] = fXY.y; Features[idx++] = fXY.z; Features[idx++] = fXY.w;
+    Features[idx++] = fXZ.x; Features[idx++] = fXZ.y; Features[idx++] = fXZ.z; Features[idx++] = fXZ.w;
+    Features[idx++] = fYZ.x; Features[idx++] = fYZ.y; Features[idx++] = fYZ.z; Features[idx++] = fYZ.w;
+    Features[idx++] = fXT.x; Features[idx++] = fXT.y; Features[idx++] = fXT.z; Features[idx++] = fXT.w;
+    Features[idx++] = fYT.x; Features[idx++] = fYT.y; Features[idx++] = fYT.z; Features[idx++] = fYT.w;
+    Features[idx++] = fZT.x; Features[idx++] = fZT.y; Features[idx++] = fZT.z; Features[idx++] = fZT.w;
+
+    // Zero-pad remaining
+    for (int i = idx; i < 64; i++)
+    {
+        Features[i] = 0;
+    }
+}
+
+// ReLU activation
+float ReLU(float x)
+{
+    return max(0, x);
+}
+
+// Simple MLP layer: output = ReLU(input * W + b)
+// WeightTex stores weights as Width x InputDim texture
+void MLPLayer(
+    float Input[256],
+    int InputDim,
+    Texture2D<float4> WeightTex,
+    int WeightTexOffset,
+    float Bias[256],
+    int BiasOffset,
+    int OutputDim,
+    bool UseReLU,
+    out float Output[256])
+{
+    for (int o = 0; o < OutputDim; o++)
+    {
+        float sum = 0;
+
+        // Matrix multiply (simplified - actual impl would be more optimized)
+        for (int i = 0; i < InputDim; i += 4)
+        {
+            int texX = i / 4;
+            int texY = WeightTexOffset + o;
+            float4 w = WeightTex.Load(int3(texX, texY, 0));
+
+            sum += Input[i+0] * w.x;
+            if (i+1 < InputDim) sum += Input[i+1] * w.y;
+            if (i+2 < InputDim) sum += Input[i+2] * w.z;
+            if (i+3 < InputDim) sum += Input[i+3] * w.w;
+        }
+
+        // Add bias
+        sum += Bias[BiasOffset + o];
+
+        // Activation
+        Output[o] = UseReLU ? ReLU(sum) : sum;
+    }
+}
+
+// Quaternion multiplication for rotation delta
+float4 QuaternionMultiply(float4 q1, float4 q2)
+{
+    return float4(
+        q1.w * q2.x + q1.x * q2.w + q1.y * q2.z - q1.z * q2.y,
+        q1.w * q2.y - q1.x * q2.z + q1.y * q2.w + q1.z * q2.x,
+        q1.w * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.w,
+        q1.w * q2.w - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z
+    );
+}
+
+// ============================================================================
+// Main Compute Shader
+// ============================================================================
+
+[numthreads(64, 1, 1)]
+void DeformGaussiansCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint GaussianIdx = DispatchThreadId.x;
+
+    if (GaussianIdx >= (uint)NumGaussians)
+        return;
+
+    // Load canonical Gaussian
+    float3 pos = CanonicalPositions[GaussianIdx];
+    float3 scale = CanonicalScales[GaussianIdx];
+    float4 rot = CanonicalRotations[GaussianIdx];
+    float opacity = CanonicalOpacities[GaussianIdx];
+
+    // Query HexPlane features
+    float features[64];
+    QueryHexPlane(pos, CurrentTime, features);
+
+    // Run through feature MLP (8 layers, 256 width)
+    // This is simplified - full implementation needs proper weight loading
+    float hidden[256];
+    float temp[256];
+
+    // Copy features to hidden (with zero padding)
+    for (int i = 0; i < 256; i++)
+    {
+        hidden[i] = (i < 64) ? features[i] : 0;
+    }
+
+    // NOTE: In practice, you'd load actual MLP weights and run through layers
+    // This is a placeholder showing the structure
+
+    // Simplified: just use features directly for small deformations
+    // Real implementation would do full MLP forward pass
+
+    // Compute deformation deltas (placeholder)
+    float3 deltaPos = float3(hidden[0], hidden[1], hidden[2]) * 0.01;
+    float3 deltaScale = float3(hidden[3], hidden[4], hidden[5]) * 0.01;
+    float4 deltaRot = normalize(float4(hidden[6], hidden[7], hidden[8], 1.0 + hidden[9] * 0.01));
+    float deltaOpacity = hidden[10] * 0.01;
+
+    // Apply deformations
+    float3 deformedPos = pos + deltaPos;
+    float3 deformedScale = scale + deltaScale;
+    float4 deformedRot = QuaternionMultiply(rot, deltaRot);
+    deformedRot = normalize(deformedRot);
+    float deformedOpacity = opacity + deltaOpacity;
+
+    // Write output
+    DeformedPositions[GaussianIdx] = deformedPos;
+    DeformedScales[GaussianIdx] = deformedScale;
+    DeformedRotations[GaussianIdx] = deformedRot;
+    DeformedOpacities[GaussianIdx] = deformedOpacity;
+}
